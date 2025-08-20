@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>22-digit Barcode Scanner</title>
+<style>
+:root{--bg:#0b0b0f;--fg:#e8e8ef;--ok:#22c55e;--bad:#ef4444}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,ui-sans-serif,system-ui;background:var(--bg);color:var(--fg);display:grid;min-height:100vh;place-items:center}
+.wrap{width:min(720px,94vw);padding:20px;display:grid;gap:12px}
+.panel{background:#0f1220;border:1px solid #1f2430;border-radius:14px;padding:14px;display:grid;gap:10px}
+video{width:100%;border-radius:10px;background:#000;aspect-ratio:16/9;object-fit:cover}
+button{background:#0e1230;color:var(--fg);border:1px solid #28304a;border-radius:10px;padding:8px 12px;font-weight:600;cursor:pointer}
+button:disabled{opacity:.5}
+.msg{padding:10px 12px;border-radius:10px;background:#0b0e16;border:1px dashed #28304a}
+.msg.ok{border-color:#134e2b;color:var(--ok)}.msg.bad{border-color:#5a1717;color:var(--bad)}
+.val{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,monospace}
+</style>
+<body>
+<div class="wrap">
+  <h1>22-digit Barcode Scanner</h1>
+  <div class="panel">
+    <video id="video" playsinline></video>
+    <div class="controls">
+      <button id="start">Start</button>
+      <button id="stop" disabled>Stop</button>
+    </div>
+    <div id="status" class="msg">Idle</div>
+    <div id="value" class="msg val"></div>
+  </div>
+</div>
+<script type="module">
+const video=document.getElementById('video')
+const startBtn=document.getElementById('start')
+const stopBtn=document.getElementById('stop')
+const statusEl=document.getElementById('status')
+const valueEl=document.getElementById('value')
+
+let stream=null,detector=null,loop=null
+
+const isIOS=()=>/iP(hone|od|ad)/.test(navigator.platform)||(navigator.userAgent.includes('Mac')&&'ontouchend' in document)
+const is22=s=>/^\d{22}$/.test(s)
+const setStatus=(t,state='')=>{
+  statusEl.textContent=t
+  statusEl.className='msg'+(state==='ok'?' ok':state==='bad'?' bad':'')
+}
+
+async function ensureDetector(){
+  if(detector) return true
+  if(!('BarcodeDetector' in window)){setStatus('BarcodeDetector not supported','bad');return false}
+  const supported=await BarcodeDetector.getSupportedFormats()
+  detector=new BarcodeDetector({formats:supported})
+  return true
+}
+
+async function startCamera(){
+  if(!await ensureDetector()) return
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}})
+  video.srcObject=stream
+  await video.play()
+  startBtn.disabled=true;stopBtn.disabled=false
+  setStatus('Scanning...')
+  if(isIOS()) scanByFrames() 
+  else scanRealtime()
+}
+
+function stopCamera(){
+  if(loop) cancelAnimationFrame(loop)
+  if(stream) stream.getTracks().forEach(t=>t.stop())
+  stream=null
+  startBtn.disabled=false;stopBtn.disabled=true
+  setStatus('Stopped');valueEl.textContent=''
+}
+
+async function scanRealtime(){
+  try{
+    const codes=await detector.detect(video)
+    handleResult(codes)
+  }catch{setStatus('Detection error','bad')}
+  loop=requestAnimationFrame(scanRealtime)
+}
+
+async function scanByFrames(){
+  const canvas=document.createElement('canvas')
+  const ctx=canvas.getContext('2d')
+  const frame=async()=>{
+    if(!stream) return
+    canvas.width=video.videoWidth
+    canvas.height=video.videoHeight
+    ctx.drawImage(video,0,0,canvas.width,canvas.height)
+    try{
+      const bmp=await createImageBitmap(canvas)
+      const codes=await detector.detect(bmp)
+      handleResult(codes)
+    }catch{}
+    loop=requestAnimationFrame(frame)
+  }
+  frame()
+}
+
+function handleResult(codes){
+  if(codes.length){
+    const raw=(codes[0].rawValue||'').trim()
+    valueEl.textContent=raw
+    if(is22(raw)) setStatus('Scanned','ok')
+    else setStatus('Not 22 digits','bad')
+  }else{
+    setStatus('No barcode detected')
+    valueEl.textContent=''
+  }
+}
+
+startBtn.onclick=startCamera
+stopBtn.onclick=stopCamera
+</script>
+</body>
+</html>
